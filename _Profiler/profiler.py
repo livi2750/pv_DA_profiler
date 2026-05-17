@@ -2,7 +2,7 @@ import io
 import re
 import warnings
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict
 
 import numpy as np
 import pandas as pd
@@ -10,33 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 warnings.filterwarnings("ignore")
-
-
-# ── Pre-processing ─────────────────────────────────────────────────────────────
-
-def preprocess_df(
-    df: pd.DataFrame,
-    clean_spaces: bool = True,
-    lowercase_cols: List[str] = None,
-    date_cols: List[str] = None,
-) -> pd.DataFrame:
-    out = df.copy()
-
-    if clean_spaces:
-        for col in out.select_dtypes(include=["object", "string"]).columns:
-            out[col] = out[col].apply(
-                lambda x: re.sub(r"\s+", " ", x.strip()) if isinstance(x, str) else x
-            )
-
-    for col in (lowercase_cols or []):
-        if col in out.columns:
-            out[col] = out[col].apply(lambda x: x.lower() if isinstance(x, str) else x)
-
-    for col in (date_cols or []):
-        if col in out.columns:
-            out[col] = pd.to_datetime(out[col], errors="coerce")
-
-    return out
 
 
 # ── Profile sections ───────────────────────────────────────────────────────────
@@ -152,25 +125,6 @@ def _missing_values(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _validate_lookup_list(df: pd.DataFrame, lookup_configs: list) -> pd.DataFrame:
-    rows = []
-    for config in lookup_configs:
-        col = config.get("column_name")
-        allowed = config.get("lookup_values", [])
-        if not col or col not in df.columns:
-            rows.append({"Column": col or "?", "Value": "Column not found.", "Row Index": "—"})
-            continue
-        allowed_str = [str(v) for v in allowed]
-        col_str = df[col].fillna("").astype(str)
-        invalid = col_str[~col_str.isin(allowed_str)]
-        if invalid.empty:
-            rows.append({"Column": col, "Value": "✓ All values match the lookup list.", "Row Index": "—"})
-        else:
-            for idx, val in invalid.items():
-                rows.append({"Column": col, "Value": val, "Row Index": idx})
-    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Column", "Value", "Row Index"])
-
-
 def _duplicate_rows(df: pd.DataFrame) -> pd.DataFrame:
     dupes = df[df.duplicated(keep=False)]
     if not dupes.empty:
@@ -204,6 +158,27 @@ def generate_profile(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     }
 
 
+# ── Report helpers ─────────────────────────────────────────────────────────────
+
+def _sc_summary_df(sc: pd.DataFrame) -> pd.DataFrame:
+    """Per-column summary of special characters — used in Excel and HTML exports."""
+    _pat = r"[^\w\s.,!?'\"@#&()\-]"
+    rows = []
+    for col, grp in sc.groupby("Column"):
+        chars = set()
+        for v in grp["Value"]:
+            chars.update(re.findall(_pat, str(v)))
+        rows.append({
+            "Column": col,
+            "Affected Values": len(grp),
+            "Special Characters Found": " ".join(sorted(chars)),
+            "Sample Values (up to 5)": "  |  ".join(str(v) for v in grp["Value"].head(5).tolist()),
+        })
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["Column", "Affected Values", "Special Characters Found", "Sample Values (up to 5)"]
+    )
+
+
 # ── Excel export ───────────────────────────────────────────────────────────────
 
 def generate_excel_report(profile: Dict[str, pd.DataFrame]) -> bytes:
@@ -218,6 +193,8 @@ def generate_excel_report(profile: Dict[str, pd.DataFrame]) -> bytes:
 
         for sheet_name, df in profile.items():
             safe = sheet_name[:31].translate(str.maketrans("", "", r"/\*?[]:'"))
+
+            # Default: write full DataFrame
             df.to_excel(writer, sheet_name=safe, index=False, startrow=1, header=False)
             ws = writer.sheets[safe]
             for col_idx, col_name in enumerate(df.columns):
@@ -320,12 +297,44 @@ def generate_html_report(
     for key, section_df in profile.items():
         icon = section_icons.get(key, "•")
         label = key.replace("_", " ").title()
-        table_blocks.append(
-            f'<div class="table-section">'
-            f'<h3>{icon} {label}</h3>'
-            f'{section_df.to_html(index=False, classes="profile-table", border=0, na_rep="—")}'
-            f'</div>'
-        )
+
+        if key == "4_Special_Characters" and not section_df.empty and "Column" in section_df.columns:
+            summary = _sc_summary_df(section_df)
+            sample = section_df.groupby("Column").head(5).reset_index(drop=True)
+            table_blocks.append(
+                f'<div class="table-section">'
+                f'<h3>{icon} {label}</h3>'
+                f'<p style="margin-bottom:10px;font-size:0.84rem;color:#555">'
+                f'{len(section_df):,} values with special characters across '
+                f'{section_df["Column"].nunique()} column(s).</p>'
+                f'{summary.to_html(index=False, classes="profile-table", border=0, na_rep="—")}'
+                f'<p style="margin:12px 0 6px;font-size:0.82rem;color:#888">'
+                f'<em>Sample rows (up to 5 per column):</em></p>'
+                f'{sample.to_html(index=False, classes="profile-table", border=0, na_rep="—")}'
+                f'</div>'
+            )
+        elif key == "7_Duplicate_Rows" and "Info" not in section_df.columns:
+            total = len(section_df)
+            unique = len(section_df.drop_duplicates())
+            sample = section_df.drop_duplicates().head(5)
+            table_blocks.append(
+                f'<div class="table-section">'
+                f'<h3>{icon} {label}</h3>'
+                f'<p style="margin-bottom:10px;font-size:0.84rem;color:#555">'
+                f'<strong>{total:,}</strong> duplicate rows across '
+                f'<strong>{unique:,}</strong> unique patterns.</p>'
+                f'<p style="margin-bottom:6px;font-size:0.82rem;color:#888">'
+                f'<em>Sample patterns (up to 5):</em></p>'
+                f'{sample.to_html(index=False, classes="profile-table", border=0, na_rep="—")}'
+                f'</div>'
+            )
+        else:
+            table_blocks.append(
+                f'<div class="table-section">'
+                f'<h3>{icon} {label}</h3>'
+                f'{section_df.to_html(index=False, classes="profile-table", border=0, na_rep="—")}'
+                f'</div>'
+            )
 
     total_missing = df.isnull().sum().sum()
     total_cells = df.shape[0] * df.shape[1]

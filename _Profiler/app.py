@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 import numpy as np
@@ -7,9 +8,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from cleaner import (
+    apply_drop_columns,
+    apply_fill_missing,
     apply_parse_dates,
     apply_remove_duplicates,
+    apply_rename_columns,
     apply_strip_spaces,
+    preview_fill_missing,
     preview_parse_dates,
     preview_remove_duplicates,
     preview_strip_spaces,
@@ -165,7 +170,9 @@ st.markdown("""
     text-align: center; font-size: 0.82rem; font-weight: 600; color: #FFFFFF;
   }
   .step span { display: block; font-size: 1.3rem; margin-bottom: 5px; }
+  .step span svg { display: block; margin: 0 auto; }
   .step-arrow { color: #00C9A7; font-size: 1.4rem; padding: 0 4px; flex-shrink: 0; }
+  .feature-card .icon svg { display: block; }
 
   /* ── Welcome: format badges ── */
   .formats-row { display: flex; gap: 10px; margin-top: 6px; }
@@ -291,19 +298,65 @@ if df_raw is None:
     st.markdown("""
 <div class="feature-grid">
   <div class="feature-card">
-    <div class="icon">🔍</div>
+    <div class="icon">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8" stroke="#00C9A7"/>
+        <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="#00C9A7"/>
+        <line x1="8"  y1="13.5" x2="8"  y2="15" stroke="#00B4D8" stroke-width="2.4"/>
+        <line x1="11" y1="10.5" x2="11" y2="15" stroke="#00B4D8" stroke-width="2.4"/>
+        <line x1="14" y1="12"   x2="14" y2="15" stroke="#00B4D8" stroke-width="2.4"/>
+      </svg>
+    </div>
     <h3>Profile</h3>
     <p>Data quality overview — types, missing values, duplicates, statistics, unique values, special characters, and correlations.</p>
     <div class="tab-hint">→ first tab after upload</div>
   </div>
   <div class="feature-card">
-    <div class="icon">📈</div>
+    <div class="icon">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <!-- Server rack: 3 layers with LED + dash -->
+        <rect x="1" y="2"  width="10" height="4.5" rx="1" stroke="#00C9A7"/>
+        <rect x="1" y="9"  width="10" height="4.5" rx="1" stroke="#00C9A7"/>
+        <rect x="1" y="16" width="10" height="4.5" rx="1" stroke="#00C9A7"/>
+        <circle cx="3" cy="4.25"  r="0.85" fill="#00C9A7"/>
+        <circle cx="3" cy="11.25" r="0.85" fill="#00C9A7"/>
+        <circle cx="3" cy="18.25" r="0.85" fill="#00C9A7"/>
+        <line x1="5.5" y1="4.25"  x2="9" y2="4.25"  stroke="#00C9A7" stroke-width="1.1" opacity="0.55"/>
+        <line x1="5.5" y1="11.25" x2="9" y2="11.25" stroke="#00C9A7" stroke-width="1.1" opacity="0.55"/>
+        <line x1="5.5" y1="18.25" x2="9" y2="18.25" stroke="#00C9A7" stroke-width="1.1" opacity="0.55"/>
+        <!-- DNA double helix: two crossing S-curves + rungs -->
+        <path d="M14 2 C14 7 22 8.5 22 12 C22 15.5 14 17 14 22" stroke="#00B4D8" fill="none"/>
+        <path d="M22 2 C22 7 14 8.5 14 12 C14 15.5 22 17 22 22" stroke="#00B4D8" fill="none"/>
+        <line x1="14.5" y1="5.5"  x2="21.5" y2="5.5"  stroke="#00B4D8" stroke-width="1" opacity="0.7"/>
+        <line x1="14.5" y1="12"   x2="21.5" y2="12"   stroke="#00B4D8" stroke-width="1" opacity="0.7"/>
+        <line x1="14.5" y1="18.5" x2="21.5" y2="18.5" stroke="#00B4D8" stroke-width="1" opacity="0.7"/>
+      </svg>
+    </div>
     <h3>Explore</h3>
     <p>Auto-generated EDA charts for every column — distributions, value counts, time series, and a relationship explorer.</p>
     <div class="tab-hint">→ second tab after upload</div>
   </div>
   <div class="feature-card">
-    <div class="icon">🧹</div>
+    <div class="icon">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <!-- Cloth / sponge (tilted rounded rect) -->
+        <rect x="3" y="5" width="13" height="10" rx="2.5" transform="rotate(-10 3 5)" stroke="#00C9A7"/>
+        <line x1="6"  y1="9"  x2="12" y2="7"  stroke="#00C9A7" stroke-width="1" opacity="0.6"/>
+        <line x1="6"  y1="12" x2="12" y2="10" stroke="#00C9A7" stroke-width="1" opacity="0.6"/>
+        <line x1="6"  y1="15" x2="12" y2="13" stroke="#00C9A7" stroke-width="1" opacity="0.6"/>
+        <!-- Hand: three finger arcs + palm -->
+        <path d="M4 17 Q4 15 5.5 15 Q7 15 7 17"     stroke="#00C9A7" fill="none"/>
+        <path d="M7 17 Q7 14.5 8.5 14.5 Q10 14.5 10 17" stroke="#00C9A7" fill="none"/>
+        <path d="M10 17 Q10 15 11.5 15 Q13 15 13 17" stroke="#00C9A7" fill="none"/>
+        <path d="M4 17 Q3.5 20 5 21.5 Q9 23 13 21.5 Q14.5 20 13 17" stroke="#00C9A7" fill="none"/>
+        <!-- Large 4-point sparkle -->
+        <path d="M19 2 L20 5.2 L23.2 6.2 L20 7.2 L19 10.4 L18 7.2 L14.8 6.2 L18 5.2 Z"
+              stroke="#00B4D8" stroke-width="1.4" fill="none"/>
+        <!-- Small 4-point sparkle -->
+        <path d="M21 13.5 L21.6 15.5 L23.6 16.1 L21.6 16.7 L21 18.7 L20.4 16.7 L18.4 16.1 L20.4 15.5 Z"
+              stroke="#00B4D8" stroke-width="1.1" fill="none"/>
+      </svg>
+    </div>
     <h3>Clean</h3>
     <p>Preview changes before applying them — strip spaces, remove duplicates, parse dates. Download cleaned data as CSV or Excel.</p>
     <div class="tab-hint">→ third tab after upload &nbsp;·&nbsp; optional</div>
@@ -314,15 +367,67 @@ if df_raw is None:
     st.markdown("**How it works**")
     st.markdown("""
 <div class="steps-row">
-  <div class="step"><span>📁</span>Upload file</div>
+  <div class="step"><span>
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#00C9A7" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto;">
+      <polyline points="16 16 12 12 8 16"/>
+      <line x1="12" y1="12" x2="12" y2="21"/>
+      <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+    </svg>
+  </span>Upload file</div>
   <div class="step-arrow">›</div>
-  <div class="step"><span>🔍</span>Profile data</div>
+  <div class="step"><span>
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto;">
+      <circle cx="11" cy="11" r="8" stroke="#00C9A7"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="#00C9A7"/>
+      <line x1="8"  y1="13.5" x2="8"  y2="15" stroke="#00B4D8" stroke-width="2.4"/>
+      <line x1="11" y1="10.5" x2="11" y2="15" stroke="#00B4D8" stroke-width="2.4"/>
+      <line x1="14" y1="12"   x2="14" y2="15" stroke="#00B4D8" stroke-width="2.4"/>
+    </svg>
+  </span>Profile data</div>
   <div class="step-arrow">›</div>
-  <div class="step"><span>📈</span>Explore patterns</div>
+  <div class="step"><span>
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto;">
+      <rect x="1" y="2"  width="10" height="4.5" rx="1" stroke="#00C9A7"/>
+      <rect x="1" y="9"  width="10" height="4.5" rx="1" stroke="#00C9A7"/>
+      <rect x="1" y="16" width="10" height="4.5" rx="1" stroke="#00C9A7"/>
+      <circle cx="3" cy="4.25"  r="0.85" fill="#00C9A7"/>
+      <circle cx="3" cy="11.25" r="0.85" fill="#00C9A7"/>
+      <circle cx="3" cy="18.25" r="0.85" fill="#00C9A7"/>
+      <line x1="5.5" y1="4.25"  x2="9" y2="4.25"  stroke="#00C9A7" stroke-width="1.1" opacity="0.55"/>
+      <line x1="5.5" y1="11.25" x2="9" y2="11.25" stroke="#00C9A7" stroke-width="1.1" opacity="0.55"/>
+      <line x1="5.5" y1="18.25" x2="9" y2="18.25" stroke="#00C9A7" stroke-width="1.1" opacity="0.55"/>
+      <path d="M14 2 C14 7 22 8.5 22 12 C22 15.5 14 17 14 22" stroke="#00B4D8" fill="none"/>
+      <path d="M22 2 C22 7 14 8.5 14 12 C14 15.5 22 17 22 22" stroke="#00B4D8" fill="none"/>
+      <line x1="14.5" y1="5.5"  x2="21.5" y2="5.5"  stroke="#00B4D8" stroke-width="1" opacity="0.7"/>
+      <line x1="14.5" y1="12"   x2="21.5" y2="12"   stroke="#00B4D8" stroke-width="1" opacity="0.7"/>
+      <line x1="14.5" y1="18.5" x2="21.5" y2="18.5" stroke="#00B4D8" stroke-width="1" opacity="0.7"/>
+    </svg>
+  </span>Explore patterns</div>
   <div class="step-arrow">›</div>
-  <div class="step"><span>🧹</span>Clean issues</div>
+  <div class="step"><span>
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto;">
+      <rect x="3" y="5" width="13" height="10" rx="2.5" transform="rotate(-10 3 5)" stroke="#00C9A7"/>
+      <line x1="6"  y1="9"  x2="12" y2="7"  stroke="#00C9A7" stroke-width="1" opacity="0.6"/>
+      <line x1="6"  y1="12" x2="12" y2="10" stroke="#00C9A7" stroke-width="1" opacity="0.6"/>
+      <line x1="6"  y1="15" x2="12" y2="13" stroke="#00C9A7" stroke-width="1" opacity="0.6"/>
+      <path d="M4 17 Q4 15 5.5 15 Q7 15 7 17"         stroke="#00C9A7" fill="none"/>
+      <path d="M7 17 Q7 14.5 8.5 14.5 Q10 14.5 10 17"  stroke="#00C9A7" fill="none"/>
+      <path d="M10 17 Q10 15 11.5 15 Q13 15 13 17"     stroke="#00C9A7" fill="none"/>
+      <path d="M4 17 Q3.5 20 5 21.5 Q9 23 13 21.5 Q14.5 20 13 17" stroke="#00C9A7" fill="none"/>
+      <path d="M19 2 L20 5.2 L23.2 6.2 L20 7.2 L19 10.4 L18 7.2 L14.8 6.2 L18 5.2 Z"
+            stroke="#00B4D8" stroke-width="1.4" fill="none"/>
+      <path d="M21 13.5 L21.6 15.5 L23.6 16.1 L21.6 16.7 L21 18.7 L20.4 16.7 L18.4 16.1 L20.4 15.5 Z"
+            stroke="#00B4D8" stroke-width="1.1" fill="none"/>
+    </svg>
+  </span>Clean issues</div>
   <div class="step-arrow">›</div>
-  <div class="step"><span>📥</span>Download report</div>
+  <div class="step"><span>
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#00C9A7" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto;">
+      <polyline points="8 17 12 21 16 17"/>
+      <line x1="12" y1="12" x2="12" y2="21"/>
+      <path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/>
+    </svg>
+  </span>Download report</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -499,36 +604,42 @@ with tab_profile:
         if sc.empty:
             st.success("No special characters found.")
         else:
-            # Summary per column
-            summary = (
-                sc.groupby("Column")
-                .agg(Affected_Values=("Row Index", "count"))
-                .reset_index()
-                .rename(columns={"Affected_Values": "Affected Values"})
-            )
+            # Build per-column summary (UI + download share the same data)
+            _sc_pat = r"[^\w\s.,!?'\"@#&()\-]"
+            _sc_rows = []
+            for _col, _grp in sc.groupby("Column"):
+                _chars = set()
+                for _v in _grp["Value"]:
+                    _chars.update(re.findall(_sc_pat, str(_v)))
+                _sc_rows.append({
+                    "Column": _col,
+                    "Affected Values": len(_grp),
+                    "Special Characters Found": " ".join(sorted(_chars)),
+                    "Sample Values (up to 3)": "  |  ".join(
+                        str(v) for v in _grp["Value"].head(3).tolist()
+                    ),
+                })
+            sc_report = pd.DataFrame(_sc_rows)
+
             st.warning(
                 f"{len(sc):,} value(s) with special characters across "
-                f"**{summary['Column'].nunique()}** column(s)."
+                f"**{sc_report['Column'].nunique()}** column(s)."
             )
-            st.dataframe(summary, use_container_width=True, hide_index=True)
+            st.dataframe(sc_report, use_container_width=True, hide_index=True)
 
-            # Sample: 3 rows per column
-            st.caption("Sample (up to 3 per column):")
-            sample = sc.groupby("Column").head(3).reset_index(drop=True)
-            st.dataframe(sample, use_container_width=True, hide_index=True)
+            st.caption("Sample rows (up to 3 per column):")
+            sc_sample = sc.groupby("Column").head(3).reset_index(drop=True)
+            st.dataframe(sc_sample, use_container_width=True, hide_index=True)
 
-            # Full list on demand
-            with st.expander(f"View full list ({len(sc):,} rows) + download"):
-                st.dataframe(sc, use_container_width=True, hide_index=True)
-                ts_sc = datetime.now().strftime("%Y%m%d_%H%M")
-                fname_sc = uploaded_file.name.rsplit(".", 1)[0]
-                st.download_button(
-                    "📥 Download special characters list (CSV)",
-                    data=sc.to_csv(index=False).encode("utf-8"),
-                    file_name=f"special_chars_{fname_sc}_{ts_sc}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
+            ts_sc = datetime.now().strftime("%Y%m%d_%H%M")
+            fname_sc = uploaded_file.name.rsplit(".", 1)[0]
+            st.download_button(
+                "📥 Download All Special Characters (CSV)",
+                data=sc.to_csv(index=False).encode("utf-8"),
+                file_name=f"special_chars_{fname_sc}_{ts_sc}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
     with st.expander("📅 Datetime Columns"):
         dt = profile["5_Datetime_Columns"]
@@ -556,8 +667,13 @@ with tab_profile:
         if "Info" in dr.columns:
             st.success("No duplicate rows found.")
         else:
-            st.warning(f"{dup_count:,} duplicate row(s) found (showing all occurrences).")
-            st.dataframe(dr, use_container_width=True, hide_index=True)
+            st.warning(f"{dup_count:,} duplicate row(s) found.")
+            st.caption("Sample duplicate patterns (up to 5 unique rows):")
+            st.dataframe(
+                dr.drop_duplicates().head(5),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     with st.expander("🔗 Correlation Matrix"):
         corr_df = profile["8_Correlation_Matrix"]
@@ -708,6 +824,127 @@ with tab_clean:
             st.rerun()
     else:
         st.info("Select one or more text columns above to preview how they will be parsed.")
+
+    st.divider()
+
+    # ── 4. Fill Missing Values ─────────────────────────────────────────────────
+    st.markdown("### 🔢 Fill Missing Values")
+    st.caption("Replace missing values column by column. Only columns with missing values are shown.")
+
+    missing_cols = [col for col in df_active.columns if df_active[col].isna().any()]
+
+    if not missing_cols:
+        st.success("No missing values found.")
+    else:
+        fill_cols_pick = st.multiselect(
+            "Select columns to fill",
+            options=missing_cols,
+            key="fill_cols_pick",
+        )
+
+        if fill_cols_pick:
+            _method_map = {"Mean": "mean", "Median": "median", "Mode": "mode", "Custom value": "custom"}
+            fill_configs = []
+            for col in fill_cols_pick:
+                is_numeric = pd.api.types.is_numeric_dtype(df_active[col])
+                method_options = (
+                    ["Mean", "Median", "Mode", "Custom value"] if is_numeric else ["Mode", "Custom value"]
+                )
+                c_lbl, c_method, c_val = st.columns([3, 2, 2])
+                with c_lbl:
+                    st.caption(f"**{col}**  ·  {df_active[col].isna().sum():,} missing")
+                with c_method:
+                    method = st.selectbox(
+                        "Method", method_options,
+                        key=f"fill_method_{col}",
+                        label_visibility="collapsed",
+                    )
+                with c_val:
+                    if method == "Custom value":
+                        custom_val = st.text_input(
+                            "Value", key=f"fill_custom_{col}",
+                            label_visibility="collapsed",
+                            placeholder="Enter fill value",
+                        )
+                    else:
+                        st.empty()
+                        custom_val = ""
+                fill_configs.append({
+                    "column": col,
+                    "method": _method_map[method],
+                    "value": custom_val,
+                })
+
+            fill_preview = preview_fill_missing(df_active, fill_configs)
+            if not fill_preview.empty:
+                with st.expander("Preview", expanded=True):
+                    st.dataframe(fill_preview, use_container_width=True, hide_index=True)
+                if st.button("Apply — Fill Missing Values", key="apply_fill", type="primary"):
+                    st.session_state.df_clean = apply_fill_missing(df_active, fill_configs)
+                    st.session_state.clean_ops.append("Fill missing values")
+                    st.rerun()
+        else:
+            st.info("Select one or more columns above to configure filling.")
+
+    st.divider()
+
+    # ── 5. Drop Columns ────────────────────────────────────────────────────────
+    st.markdown("### 🗑️ Drop Columns")
+    st.caption("Remove columns you don't need before downloading.")
+
+    drop_cols_pick = st.multiselect(
+        "Select columns to drop",
+        options=df_active.columns.tolist(),
+        key="drop_cols_pick",
+    )
+
+    if drop_cols_pick:
+        keep_count = len(df_active.columns) - len(drop_cols_pick)
+        st.warning(
+            f"**{len(drop_cols_pick)}** column(s) will be removed. "
+            f"**{keep_count}** column(s) will remain."
+        )
+        st.caption("Removing: " + " · ".join(f"`{c}`" for c in drop_cols_pick))
+        if st.button("Apply — Drop Columns", key="apply_drop", type="primary"):
+            st.session_state.df_clean = apply_drop_columns(df_active, drop_cols_pick)
+            st.session_state.clean_ops.append(f"Drop {len(drop_cols_pick)} column(s)")
+            st.rerun()
+
+    st.divider()
+
+    # ── 6. Rename Columns ─────────────────────────────────────────────────────
+    st.markdown("### ✏️ Rename Columns")
+    st.caption("Rename column headers before downloading.")
+
+    rename_cols_pick = st.multiselect(
+        "Select columns to rename",
+        options=df_active.columns.tolist(),
+        key="rename_cols_pick",
+    )
+
+    if rename_cols_pick:
+        rename_map = {}
+        for col in rename_cols_pick:
+            new_name = st.text_input(
+                f"`{col}`  →",
+                value=col,
+                key=f"rename_{col}",
+            )
+            if new_name and new_name.strip() and new_name.strip() != col:
+                rename_map[col] = new_name.strip()
+
+        if rename_map:
+            preview_rename = pd.DataFrame(
+                [{"Current Name": k, "New Name": v} for k, v in rename_map.items()]
+            )
+            with st.expander("Preview", expanded=True):
+                st.dataframe(preview_rename, use_container_width=True, hide_index=True)
+            if st.button("Apply — Rename Columns", key="apply_rename", type="primary"):
+                st.session_state.df_clean = apply_rename_columns(df_active, rename_map)
+                st.session_state.clean_ops.append(f"Rename {len(rename_map)} column(s)")
+                st.rerun()
+        else:
+            st.info("Enter a new name for at least one column above to enable the Apply button.")
 
     st.divider()
 

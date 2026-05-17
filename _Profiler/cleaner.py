@@ -95,6 +95,72 @@ def apply_parse_dates(df: pd.DataFrame, columns: list) -> pd.DataFrame:
     return out
 
 
+# ── Fill missing values ────────────────────────────────────────────────────────
+
+def preview_fill_missing(df: pd.DataFrame, fill_configs: list) -> pd.DataFrame:
+    rows = []
+    for config in fill_configs:
+        col = config.get("column")
+        method = config.get("method")
+        custom_val = config.get("value", "")
+        if col not in df.columns:
+            continue
+        missing_count = int(df[col].isna().sum())
+        if missing_count == 0:
+            continue
+        if method == "mean":
+            fill_val = f"{df[col].mean():.4f}"
+        elif method == "median":
+            fill_val = f"{df[col].median():.4f}"
+        elif method == "mode":
+            mode = df[col].mode()
+            fill_val = str(mode.iloc[0]) if not mode.empty else "—"
+        else:
+            fill_val = str(custom_val) if custom_val else "(empty string)"
+        rows.append({
+            "Column": col,
+            "Missing Count": missing_count,
+            "Fill Method": method.capitalize(),
+            "Fill Value": fill_val,
+        })
+    return pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["Column", "Missing Count", "Fill Method", "Fill Value"]
+    )
+
+
+def apply_fill_missing(df: pd.DataFrame, fill_configs: list) -> pd.DataFrame:
+    out = df.copy()
+    for config in fill_configs:
+        col = config.get("column")
+        method = config.get("method")
+        if col not in out.columns:
+            continue
+        if method == "mean":
+            out[col] = out[col].fillna(out[col].mean())
+        elif method == "median":
+            out[col] = out[col].fillna(out[col].median())
+        elif method == "mode":
+            mode = out[col].mode()
+            if not mode.empty:
+                out[col] = out[col].fillna(mode.iloc[0])
+        elif method == "custom":
+            out[col] = out[col].fillna(config.get("value", ""))
+    return out
+
+
+# ── Drop columns ───────────────────────────────────────────────────────────────
+
+def apply_drop_columns(df: pd.DataFrame, columns: list) -> pd.DataFrame:
+    return df.drop(columns=[c for c in columns if c in df.columns])
+
+
+# ── Rename columns ─────────────────────────────────────────────────────────────
+
+def apply_rename_columns(df: pd.DataFrame, rename_map: dict) -> pd.DataFrame:
+    clean_map = {k: v for k, v in rename_map.items() if k in df.columns and v and v.strip() != k}
+    return df.rename(columns=clean_map)
+
+
 # ── Download helpers ───────────────────────────────────────────────────────────
 
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
